@@ -1,1 +1,665 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Quest - 2D Adventure</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            font-family: 'Press Start 2P', monospace, sans-serif;
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        canvas {
+            image-rendering: pixelated;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-arcade {
+            background: linear-gradient(to bottom, #4f46e5, #3730a3);
+            border: 2px solid #6366f1;
+            box-shadow: 0 4px 0 #1e1b4b;
+            transition: all 0.1s ease;
+        }
+
+        .btn-arcade:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 0 #1e1b4b;
+        }
+
+        .btn-touch {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(4px);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 9999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: white;
+            user-select: none;
+        }
+
+        .btn-touch:active {
+            background: rgba(255, 255, 255, 0.4);
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
+
+    <!-- Header / Title -->
+    <header class="text-center mb-2 sm:mb-4">
+        <h1 class="text-xl sm:text-3xl text-yellow-400 tracking-wider mb-1 drop-shadow-md">PIXEL QUEST</h1>
+        <p class="text-xs sm:text-sm text-slate-400">Collect crystals, avoid obstacles, reach the portal!</p>
+    </header>
+
+    <!-- Main Game Container -->
+    <div class="relative w-full max-w-4xl flex flex-col items-center">
+
+        <!-- Top HUD Overlay -->
+        <div class="w-full bg-slate-800 border-2 border-slate-700 rounded-t-xl p-3 flex justify-between items-center text-xs sm:text-sm">
+            <div class="flex items-center gap-4">
+                <div>LEVEL: <span id="hud-level" class="text-cyan-400">1</span></div>
+                <div>LIVES: <span id="hud-lives" class="text-red-400">❤️❤️❤️</span></div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div>SCORE: <span id="hud-score" class="text-yellow-400">0</span></div>
+                <button id="sound-toggle" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-xs">🔊 Sound</button>
+            </div>
+        </div>
+
+        <!-- Canvas Game World -->
+        <div class="relative w-full aspect-[16/9] bg-black border-2 border-t-0 border-slate-700 rounded-b-xl overflow-hidden">
+            <canvas id="gameCanvas" class="w-full h-full block"></canvas>
+
+            <!-- Overlay Screen (Start / Game Over / Win) -->
+            <div id="overlay" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-6 text-center z-10">
+                <h2 id="overlay-title" class="text-2xl sm:text-4xl text-yellow-400 mb-4">PIXEL QUEST</h2>
+                <p id="overlay-desc" class="text-xs sm:text-sm text-slate-300 max-w-md mb-6 leading-relaxed">
+                    Use LEFT / RIGHT arrow keys (or A / D) to move, and UP (or W / SPACE) to jump. Reach the magical portal to progress!
+                </p>
+                <button id="start-btn" class="btn-arcade text-white text-xs sm:text-base px-6 py-3 rounded-lg uppercase font-bold tracking-widest">
+                    Start Game
+                </button>
+            </div>
+        </div>
+
+        <!-- Touch Controls (Mobile Only) -->
+        <div class="w-full flex justify-between items-center mt-4 px-2 sm:hidden">
+            <div class="flex gap-3">
+                <button id="btn-left" class="btn-touch w-14 h-14">◀</button>
+                <button id="btn-right" class="btn-touch w-14 h-14">▶</button>
+            </div>
+            <button id="btn-jump" class="btn-touch w-16 h-16 bg-yellow-500/30 border-yellow-400/60">▲</button>
+        </div>
+
+        <!-- Footer Instructions -->
+        <footer class="text-center text-[10px] sm:text-xs text-slate-500 mt-4">
+            Controls: Arrow Keys / WASD / On-screen Buttons
+        </footer>
+    </div>
+
+    <!-- JavaScript Game Engine -->
+    <script>
+        // ==========================================
+        // 1. SOUND SYNTHESIZER (WEB AUDIO API)
+        // ==========================================
+        class SoundFX {
+            constructor() {
+                this.ctx = null;
+                this.enabled = true;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+
+            playJump() {
+                if (!this.enabled || !this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(400, this.ctx.currentTime + 0.15);
+
+                gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.15);
+            }
+
+            playCoin() {
+                if (!this.enabled || !this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+                osc.frequency.setValueAtTime(900, this.ctx.currentTime + 0.08);
+
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.2);
+            }
+
+            playHurt() {
+                if (!this.enabled || !this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+                osc.frequency.linearRampToValueAtTime(40, this.ctx.currentTime + 0.2);
+
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.2);
+            }
+
+            playWin() {
+                if (!this.enabled || !this.ctx) return;
+                const notes = [400, 500, 600, 800];
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime + idx * 0.1);
+
+                    gain.gain.setValueAtTime(0.2, this.ctx.currentTime + idx * 0.1);
+                    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + idx * 0.1 + 0.15);
+
+                    osc.start(this.ctx.currentTime + idx * 0.1);
+                    osc.stop(this.ctx.currentTime + idx * 0.1 + 0.15);
+                });
+            }
+
+            playGameOver() {
+                if (!this.enabled || !this.ctx) return;
+                const notes = [300, 250, 200, 150];
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime + idx * 0.15);
+
+                    gain.gain.setValueAtTime(0.25, this.ctx.currentTime + idx * 0.15);
+                    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + idx * 0.15 + 0.2);
+
+                    osc.start(this.ctx.currentTime + idx * 0.15);
+                    osc.stop(this.ctx.currentTime + idx * 0.15 + 0.2);
+                });
+            }
+        }
+
+        const audio = new SoundFX();
+
+        // ==========================================
+        // 2. GAME DATA & LEVEL CONFIGURATIONS
+        // ==========================================
+        const CANVAS_WIDTH = 960;
+        const CANVAS_HEIGHT = 540;
+
+        const LEVELS = [
+            {
+                name: "Emerald Forest",
+                background: { top: "#0f172a", bottom: "#064e3b" },
+                platformColor: "#15803d",
+                obstacleColor: "#dc2626",
+                gravity: 0.5,
+                playerStart: { x: 50, y: 350 },
+                portal: { x: 880, y: 120, width: 40, height: 60 },
+                platforms: [
+                    { x: 0, y: 500, width: 960, height: 40 }, // Ground
+                    { x: 150, y: 400, width: 140, height: 20 },
+                    { x: 350, y: 320, width: 140, height: 20 },
+                    { x: 550, y: 240, width: 140, height: 20 },
+                    { x: 750, y: 180, width: 160, height: 20 }
+                ],
+                spikes: [
+                    { x: 300, y: 480, width: 40, height: 20 },
+                    { x: 500, y: 480, width: 40, height: 20 }
+                ],
+                crystals: [
+                    { x: 200, y: 360, collected: false },
+                    { x: 400, y: 280, collected: false },
+                    { x: 600, y: 200, collected: false },
+                    { x: 820, y: 140, collected: false }
+                ]
+            },
+            {
+                name: "Volcanic Cavern",
+                background: { top: "#2e1065", bottom: "#7f1d1d" },
+                platformColor: "#78350f",
+                obstacleColor: "#ef4444",
+                gravity: 0.55,
+                playerStart: { x: 50, y: 400 },
+                portal: { x: 860, y: 320, width: 40, height: 60 },
+                platforms: [
+                    { x: 0, y: 500, width: 200, height: 40 },
+                    { x: 260, y: 440, width: 120, height: 20 },
+                    { x: 440, y: 360, width: 120, height: 20 },
+                    { x: 260, y: 260, width: 120, height: 20 },
+                    { x: 440, y: 180, width: 140, height: 20 },
+                    { x: 650, y: 260, width: 120, height: 20 },
+                    { x: 820, y: 380, width: 140, height: 20 }
+                ],
+                spikes: [
+                    { x: 290, y: 420, width: 30, height: 20 },
+                    { x: 470, y: 340, width: 30, height: 20 }
+                ],
+                crystals: [
+                    { x: 300, y: 220, collected: false },
+                    { x: 500, y: 140, collected: false },
+                    { x: 700, y: 220, collected: false }
+                ]
+            },
+            {
+                name: "Cyber Citadel",
+                background: { top: "#0284c7", bottom: "#312e81" },
+                platformColor: "#4338ca",
+                obstacleColor: "#f43f5e",
+                gravity: 0.6,
+                playerStart: { x: 50, y: 100 },
+                portal: { x: 880, y: 420, width: 40, height: 60 },
+                platforms: [
+                    { x: 0, y: 160, width: 180, height: 20 },
+                    { x: 220, y: 220, width: 120, height: 20 },
+                    { x: 380, y: 280, width: 120, height: 20 },
+                    { x: 540, y: 340, width: 120, height: 20 },
+                    { x: 700, y: 400, width: 120, height: 20 },
+                    { x: 840, y: 480, width: 120, height: 20 }
+                ],
+                spikes: [
+                    { x: 250, y: 200, width: 30, height: 20 },
+                    { x: 570, y: 320, width: 30, height: 20 }
+                ],
+                crystals: [
+                    { x: 260, y: 180, collected: false },
+                    { x: 420, y: 240, collected: false },
+                    { x: 580, y: 300, collected: false },
+                    { x: 740, y: 360, collected: false }
+                ]
+            }
+        ];
+
+        // ==========================================
+        // 3. ENGINE STATE & INITIALIZATION
+        // ==========================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+
+        let gameState = {
+            running: false,
+            currentLevelIdx: 0,
+            score: 0,
+            lives: 3,
+            keys: { left: false, right: false, up: false }
+        };
+
+        class Player {
+            constructor() {
+                this.x = 0;
+                this.y = 0;
+                this.width = 24;
+                this.height = 36;
+                this.vx = 0;
+                this.vy = 0;
+                this.speed = 4.5;
+                this.jumpForce = -11;
+                this.isGrounded = false;
+                this.color = "#facc15"; // Yellow hero
+            }
+
+            reset(startPos) {
+                this.x = startPos.x;
+                this.y = startPos.y;
+                this.vx = 0;
+                this.vy = 0;
+                this.isGrounded = false;
+            }
+
+            update(gravity, platforms) {
+                // Horizontal Movement
+                if (gameState.keys.left) this.vx = -this.speed;
+                else if (gameState.keys.right) this.vx = this.speed;
+                else this.vx = 0;
+
+                // Jump
+                if (gameState.keys.up && this.isGrounded) {
+                    this.vy = this.jumpForce;
+                    this.isGrounded = false;
+                    audio.playJump();
+                }
+
+                // Apply Gravity
+                this.vy += gravity;
+
+                // Move X and Check Collision
+                this.x += this.vx;
+                platforms.forEach(p => {
+                    if (this.checkCollision(this, p)) {
+                        if (this.vx > 0) this.x = p.x - this.width;
+                        else if (this.vx < 0) this.x = p.x + p.width;
+                    }
+                });
+
+                // Move Y and Check Collision
+                this.y += this.vy;
+                this.isGrounded = false;
+                platforms.forEach(p => {
+                    if (this.checkCollision(this, p)) {
+                        if (this.vy > 0) { // Landing
+                            this.y = p.y - this.height;
+                            this.vy = 0;
+                            this.isGrounded = true;
+                        } else if (this.vy < 0) { // Hitting ceiling
+                            this.y = p.y + p.height;
+                            this.vy = 0;
+                        }
+                    }
+                });
+
+                // Screen Boundary Constraints
+                if (this.x < 0) this.x = 0;
+                if (this.x + this.width > CANVAS_WIDTH) this.x = CANVAS_WIDTH - this.width;
+            }
+
+            checkCollision(rect1, rect2) {
+                return (
+                    rect1.x < rect2.x + rect2.width &&
+                    rect1.x + rect1.width > rect2.x &&
+                    rect1.y < rect2.y + rect2.height &&
+                    rect1.y + rect1.height > rect2.y
+                );
+            }
+
+            draw(ctx) {
+                // Character Body
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+
+                // Eyes / Visor
+                ctx.fillStyle = "#0f172a";
+                ctx.fillRect(this.x + 4, this.y + 6, 16, 8);
+                ctx.fillStyle = "#38bdf8";
+                ctx.fillRect(this.x + 10, this.y + 8, 8, 4);
+
+                // Legs detail
+                ctx.fillStyle = "#ca8a04";
+                ctx.fillRect(this.x + 2, this.y + this.height - 8, 8, 8);
+                ctx.fillRect(this.x + 14, this.y + this.height - 8, 8, 8);
+            }
+        }
+
+        const player = new Player();
+
+        // ==========================================
+        // 4. INPUT HANDLERS (KEYBOARD & TOUCH)
+        // ==========================================
+        function setKey(code, state) {
+            if (code === 'ArrowLeft' || code === 'KeyA') gameState.keys.left = state;
+            if (code === 'ArrowRight' || code === 'KeyD') gameState.keys.right = state;
+            if (code === 'ArrowUp' || code === 'KeyW' || code === 'Space') gameState.keys.up = state;
+        }
+
+        window.addEventListener('keydown', (e) => setKey(e.code, true));
+        window.addEventListener('keyup', (e) => setKey(e.code, false));
+
+        // Touch Control Listeners
+        const bindTouch = (id, key) => {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); gameState.keys[key] = true; });
+            btn.addEventListener('touchend', (e) => { e.preventDefault(); gameState.keys[key] = false; });
+            btn.addEventListener('mousedown', () => { gameState.keys[key] = true; });
+            btn.addEventListener('mouseup', () => { gameState.keys[key] = false; });
+        };
+        bindTouch('btn-left', 'left');
+        bindTouch('btn-right', 'right');
+        bindTouch('btn-jump', 'up');
+
+        // Mute/Unmute sound
+        document.getElementById('sound-toggle').addEventListener('click', () => {
+            audio.enabled = !audio.enabled;
+            document.getElementById('sound-toggle').innerText = audio.enabled ? "🔊 Sound" : "🔇 Mute";
+        });
+
+        // Overlay Button
+        document.getElementById('start-btn').addEventListener('click', () => {
+            audio.init();
+            if (!gameState.running) {
+                startGame();
+            } else {
+                restartGame();
+            }
+        });
+
+        // ==========================================
+        // 5. GAME FLOW CONTROLLER
+        // ==========================================
+        function updateHUD() {
+            document.getElementById('hud-level').innerText = gameState.currentLevelIdx + 1;
+            document.getElementById('hud-score').innerText = gameState.score;
+            document.getElementById('hud-lives').innerText = "❤️".repeat(Math.max(0, gameState.lives));
+        }
+
+        function loadLevel(idx) {
+            const level = LEVELS[idx];
+            player.reset(level.playerStart);
+
+            // Clone crystal state for level restarts
+            level.crystals.forEach(c => c.collected = false);
+            updateHUD();
+        }
+
+        function startGame() {
+            gameState.score = 0;
+            gameState.lives = 3;
+            gameState.currentLevelIdx = 0;
+            gameState.running = true;
+            document.getElementById('overlay').classList.add('hidden');
+            loadLevel(0);
+        }
+
+        function restartGame() {
+            startGame();
+        }
+
+        function playerHurt() {
+            audio.playHurt();
+            gameState.lives--;
+            updateHUD();
+
+            if (gameState.lives <= 0) {
+                audio.playGameOver();
+                showOverlay("GAME OVER", "You ran out of lives! Click below to try again.");
+            } else {
+                // Respawn player at level start
+                const level = LEVELS[gameState.currentLevelIdx];
+                player.reset(level.playerStart);
+            }
+        }
+
+        function showOverlay(title, desc) {
+            gameState.running = false;
+            document.getElementById('overlay-title').innerText = title;
+            document.getElementById('overlay-desc').innerText = desc;
+            document.getElementById('start-btn').innerText = "Play Again";
+            document.getElementById('overlay').classList.remove('hidden');
+        }
+
+        // ==========================================
+        // 6. RENDER & UPDATE LOOP
+        // ==========================================
+        function drawBackground(level) {
+            // Gradient Background
+            const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+            grad.addColorStop(0, level.background.top);
+            grad.addColorStop(1, level.background.bottom);
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        }
+
+        function drawPortal(portal) {
+            // Pulsing portal effect
+            const time = Date.now() * 0.005;
+            ctx.fillStyle = "#c084fc";
+            ctx.beginPath();
+            ctx.ellipse(
+                portal.x + portal.width / 2,
+                portal.y + portal.height / 2,
+                portal.width / 2 + Math.sin(time) * 4,
+                portal.height / 2 + Math.cos(time) * 4,
+                0, 0, Math.PI * 2
+            );
+            ctx.fill();
+
+            // Inner core
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.ellipse(
+                portal.x + portal.width / 2,
+                portal.y + portal.height / 2,
+                portal.width / 4,
+                portal.height / 4,
+                0, 0, Math.PI * 2
+            );
+            ctx.fill();
+        }
+
+        function update() {
+            if (!gameState.running) return;
+
+            const level = LEVELS[gameState.currentLevelIdx];
+
+            // 1. Update Player position and collisions with platforms
+            player.update(level.gravity, level.platforms);
+
+            // 2. Check Death by Falling Out of Bounds
+            if (player.y > CANVAS_HEIGHT) {
+                playerHurt();
+                return;
+            }
+
+            // 3. Spike Hazard Collision
+            level.spikes.forEach(s => {
+                if (player.checkCollision(player, s)) {
+                    playerHurt();
+                }
+            });
+
+            // 4. Collect Crystals
+            level.crystals.forEach(c => {
+                if (!c.collected) {
+                    const cBounds = { x: c.x - 10, y: c.y - 10, width: 20, height: 20 };
+                    if (player.checkCollision(player, cBounds)) {
+                        c.collected = true;
+                        gameState.score += 100;
+                        audio.playCoin();
+                        updateHUD();
+                    }
+                }
+            });
+
+            // 5. Portal Reach / Level Win
+            if (player.checkCollision(player, level.portal)) {
+                audio.playWin();
+                if (gameState.currentLevelIdx + 1 < LEVELS.length) {
+                    gameState.currentLevelIdx++;
+                    loadLevel(gameState.currentLevelIdx);
+                } else {
+                    showOverlay("VICTORY!", `Congratulations! You beat all levels with a total score of ${gameState.score}!`);
+                }
+            }
+        }
+
+        function render() {
+            const level = LEVELS[gameState.currentLevelIdx];
+
+            // Draw Background
+            drawBackground(level);
+
+            // Draw Platforms
+            ctx.fillStyle = level.platformColor;
+            level.platforms.forEach(p => {
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+                // Top Highlight Line
+                ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
+                ctx.fillRect(p.x, p.y, p.width, 4);
+                ctx.fillStyle = level.platformColor;
+            });
+
+            // Draw Spikes
+            ctx.fillStyle = level.obstacleColor;
+            level.spikes.forEach(s => {
+                const count = Math.floor(s.width / 10);
+                for (let i = 0; i < count; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(s.x + i * 10, s.y + s.height);
+                    ctx.lineTo(s.x + i * 10 + 5, s.y);
+                    ctx.lineTo(s.x + (i + 1) * 10, s.y + s.height);
+                    ctx.fill();
+                }
+            });
+
+            // Draw Collectible Crystals
+            level.crystals.forEach(c => {
+                if (!c.collected) {
+                    ctx.fillStyle = "#38bdf8";
+                    ctx.beginPath();
+                    ctx.moveTo(c.x, c.y - 10);
+                    ctx.lineTo(c.x + 8, c.y);
+                    ctx.lineTo(c.x, c.y + 10);
+                    ctx.lineTo(c.x - 8, c.y);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            });
+
+            // Draw Portal
+            drawPortal(level.portal);
+
+            // Draw Player
+            player.draw(ctx);
+        }
+
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start Main Loop
+        window.onload = () => {
+            gameLoop();
+        };
+    </script>
+</body>
+</html>
